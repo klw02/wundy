@@ -137,7 +137,7 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
         elements: list[int] = []
         if "element" in load:
             elements.append(load["element"])
-        elif load["elsset"] in elsets:
+        elif load["elset"] in elsets:
             elements.extend(elsets[load["elset"]])
         else:
             errors += 1
