@@ -53,19 +53,18 @@ def first_fe_code(
         sign = np.sign(direction[0])
         if sign == 0.0:
             raise ValueError(f"dload direction must be ±1, got {direction[0]}")
-        for element in dload["elements"]:
-            if element not in block_elem_map:
+        for eid in dload["elements"]:
+            if eid not in block_elem_map:
                 raise ValueError(
-                    f"Element {element} in distributed load "
+                    f"Element {eid} in distributed load "
                     f"{dload['name']} not found in any element block"
                 )
-            block_index, local_index = block_elem_map[element]
+            block_index, local_index = block_elem_map[eid]
             block = blocks[block_index]
             nodes = block["connect"][local_index]
             xe = coords[nodes]
             he = xe[1, 0] - xe[0, 0]
-            element = block["element"]
-            A = element["properties"]["area"]
+            A = block["element"]["properties"]["area"]
             if dtype == "BX":
                 q = dload["value"] * sign
             elif dtype == "GRAV":
@@ -118,4 +117,9 @@ def first_fe_code(
 
 
 def global_dof(node: int, local_dof: int, dof_per_node: int) -> int:
+    """Return the global degree of freedom index for a given node and local dof
+
+    NOTE: Assumes elements have uniform degrees of freedom across the mesh.
+
+    """
     return node * dof_per_node + local_dof
