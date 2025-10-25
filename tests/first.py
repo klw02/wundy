@@ -44,6 +44,7 @@ wundy:
         inp["bcs"],
         inp["dload"],
         inp["materials"],
+        inp["block_elem_map"],
     )
 
     dofs = soln["dofs"]

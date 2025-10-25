@@ -110,7 +110,8 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
 
     # Put element blocks in dictionary for easier look up
     blocks: list[Any] = preprocessed.setdefault("blocks", [])
-    for eb in inp["element blocks"]:
+    block_elem_map: dict[int, tuple[int, int]] = preprocessed.setdefault("block_elem_map", {})
+    for bi, eb in enumerate(inp["element blocks"]):
         name = eb["name"]
         if name in blocks:
             errors += 1
@@ -170,7 +171,12 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
                 connect.append(row)
             else:
                 block["connect"] = np.array(connect, dtype=int)
-                block["elements"] = elems
+                block["elem_map"] = dict(zip(elems, range(len(elems))))
+                for j, e in enumerate(elems):
+                    if e in block_elem_map:
+                        errors += 1
+                        logger.error(f"Duplicate element ID {e} found in multiple blocks")
+                    block_elem_map[e] = (bi, j)
                 blocks.append(block)
 
     # Convert boundary conditions to tags/vals that can be used by the assembler
@@ -280,10 +286,7 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
         )
 
     # Check if all elements are assigned to an element block
-    assigned: set[int] = set()
-    for block in blocks:
-        elems = [n for row in block["connect"] for n in row]
-        assigned.update(elems)
+    assigned: set[int] = set(block_elem_map.keys())
     if unassigned := set(range(num_elem)).difference(assigned):
         errors += 1
         for e in unassigned:

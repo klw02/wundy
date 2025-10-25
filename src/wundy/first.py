@@ -13,6 +13,7 @@ def first_fe_code(
     bcs: list[dict],
     dloads: list[dict],
     materials: dict[str, Any],
+    block_elem_map: dict[int, tuple[int, int]],
 ) -> dict[str, Any]:
     dof_per_node = 1
     num_node = coords.shape[0]
@@ -53,32 +54,29 @@ def first_fe_code(
         if sign == 0.0:
             raise ValueError(f"dload direction must be ±1, got {direction[0]}")
         for element in dload["elements"]:
-            for block in blocks:
-                if element not in block["elements"]:
-                    continue
-                local_index = block["elements"].index(element)
-                nodes = block["connect"][local_index]
-                xe = coords[nodes]
-                he = xe[1, 0] - xe[0, 0]
-                element = block["element"]
-                A = element["properties"]["area"]
-                if dtype == "BX":
-                    q = dload["value"] * sign
-                elif dtype == "GRAV":
-                    mat = materials[block["material"]]
-                    rho = mat["density"]
-                    q = rho * A * dload["value"] * sign
-                else:
-                    raise NotImplementedError(f"dload type {dtype!r} not supported for 1D")
-                eft = [global_dof(n, j, dof_per_node) for n in nodes for j in range(dof_per_node)]
-                qe = q * he / 2 * np.ones(2)
-                F[eft] += qe
-                break
-            else:
+            if element not in block_elem_map:
                 raise ValueError(
                     f"Element {element} in distributed load "
                     f"{dload['name']} not found in any element block"
                 )
+            block_index, local_index = block_elem_map[element]
+            block = blocks[block_index]
+            nodes = block["connect"][local_index]
+            xe = coords[nodes]
+            he = xe[1, 0] - xe[0, 0]
+            element = block["element"]
+            A = element["properties"]["area"]
+            if dtype == "BX":
+                q = dload["value"] * sign
+            elif dtype == "GRAV":
+                mat = materials[block["material"]]
+                rho = mat["density"]
+                q = rho * A * dload["value"] * sign
+            else:
+                raise NotImplementedError(f"dload type {dtype!r} not supported for 1D")
+            eft = [global_dof(n, j, dof_per_node) for n in nodes for j in range(dof_per_node)]
+            qe = q * he / 2 * np.ones(2)
+            F[eft] += qe
 
     # Apply Dirchlet boundary conditions using a symmetry preserving elimination
     # Let
