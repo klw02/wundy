@@ -110,8 +110,7 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
 
     # Put element blocks in dictionary for easier look up
     blocks: list[Any] = preprocessed.setdefault("blocks", [])
-    block_elem_map: dict[int, tuple[int, int]] = preprocessed.setdefault("block_elem_map", {})
-    for bi, eb in enumerate(inp["element blocks"]):
+    for eb in inp["element blocks"]:
         name = eb["name"]
         if name in blocks:
             errors += 1
@@ -171,12 +170,8 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
                 connect.append(row)
             else:
                 block["connect"] = np.array(connect, dtype=int)
+                # Map from global index to local index
                 block["elem_map"] = dict(zip(elems, range(len(elems))))
-                for j, e in enumerate(elems):
-                    if e in block_elem_map:
-                        errors += 1
-                        logger.error(f"Duplicate element ID {e} found in multiple blocks")
-                    block_elem_map[e] = (bi, j)
                 blocks.append(block)
 
     # Convert boundary conditions to tags/vals that can be used by the assembler
@@ -285,9 +280,17 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
             }
         )
 
+    # Create a mapping from global element index to block index, local elem index (within the block)
+    block_elem_map: dict[int, tuple[int, int]] = preprocessed.setdefault("block_elem_map", {})
+    for ib, block in enumerate(blocks):
+        for global_elem_index, local_elem_index in block["elem_map"].items():
+            if global_elem_index in block_elem_map:
+                errors += 1
+                logger.error(f"Duplicate element ID {e} found in multiple blocks")
+            block_elem_map[global_elem_index] = (ib, local_elem_index)
+
     # Check if all elements are assigned to an element block
-    assigned: set[int] = set(block_elem_map.keys())
-    if unassigned := set(range(num_elem)).difference(assigned):
+    if unassigned := set(range(num_elem)).difference(block_elem_map.keys()):
         errors += 1
         for e in unassigned:
             logger.error(f"Element {e} is not assigned to any element blocks")
