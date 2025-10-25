@@ -3,96 +3,158 @@ import io
 import numpy as np
 
 import wundy
+from wundy.schemas import DIRICHLET
+from wundy.schemas import NEUMANN
 
 
-def test_load_input():
+def user_input() -> io.StringIO:
     file = io.StringIO()
     file.write("""\
 wundy:
-  coords: [0, 1, 2]
-  connect: [[0, 1], [1, 2]]
-  nset:
+  nodes: [[1, 0], [2, 1], [3, 2]]
+  elements: [[1, 1, 2], [2, 2, 3]]
+  node sets:
   - name: nset-1
-    nodes: [1]
-  boundary:
-  - node: 0
+    nodes: [2]
+  boundary conditions:
+  - nodes: 1
     dof: 'x'
-  - nset: 'nset-1'
-    amplitude: 1.0
-  cload:
-  - node: 2
-    amplitude: 2.0
-  material:
+  - nodes: 'nset-1'
+    dof: 'x'
+    value: 1.0
+  concentrated loads:
+  - nodes: 3
+    dof: x
+    value: 2.0
+  materials:
   - type: elastic
     name: mat-1
     parameters:
       E: 10.0
       nu: 0.3
-  element block:
+  distributed loads:
+  - type: BX
+    elements: all
+    value: 2.0
+    direction: [1.0]
+  distributed loads:
+  - type: GRAV
+    elements: all
+    direction: [-1.0]
+    value: 2.0
+  element blocks:
   - material: mat-1
     name: block-1
-    elements: all
-    element_type: t1d1
+    elements: ALL
+    element:
+      type: T1D1
 """)
     file.seek(0)
-    data = wundy.ui.load(file)
+    return file
 
+
+def test_validate_input():
+    file = user_input()
+    data = wundy.ui.load(file)
     inp = data["wundy"]
 
     # Input file validator converted lists to arrays
-    assert np.allclose(inp["coords"], [[0.0], [1.0], [2.0]])
-    assert isinstance(inp["coords"], np.ndarray)
-    assert inp["coords"].dtype == float
-
-    assert np.allclose(inp["connect"], [[0, 1], [1, 2]])
-    assert isinstance(inp["connect"], np.ndarray)
-    assert inp["connect"].dtype == int
+    assert inp["nodes"] == [[1, 0.0], [2, 1.0], [3, 2.0]]
+    assert inp["elements"] == [[1, 1, 2], [2, 2, 3]]
 
     # And inserts default values
-    assert inp["boundary"] == [
-        {"node": 0, "type": "dirichlet", "dof": 0, "amplitude": 0.0},
-        {"nset": "nset-1", "type": "dirichlet", "dof": 0, "amplitude": 1.0},
-    ]
+    assert inp["boundary conditions"][0] == {
+        "nodes": [1],
+        "type": DIRICHLET,
+        "dof": 0,
+        "value": 0.0,
+    }
+    assert inp["boundary conditions"][1] == {
+        "nodes": "NSET-1",
+        "type": DIRICHLET,
+        "dof": 0,
+        "value": 1.0,
+    }
 
-    nsets = inp["nset"]
+    nsets = inp["node sets"]
     assert isinstance(nsets, list)
     assert len(nsets) == 1
-    assert np.allclose(nsets[0]["nodes"], [1])
-    assert inp["cload"] == [{"node": 2, "dof": 0, "amplitude": 2.0}]
+    assert np.allclose(nsets[0]["nodes"], [2])
 
-    materials = inp["material"]
+    assert inp["concentrated loads"] == [{"nodes": [3], "dof": 0, "value": 2.0}]
+
+    materials = inp["materials"]
     assert isinstance(materials, list)
     assert len(materials) == 1
 
     material = materials[0]
-    assert material["type"] == "elastic"
-    assert material["name"] == "mat-1"
+    assert material["type"] == "ELASTIC"
+    assert material["name"] == "MAT-1"
+    assert material["density"] == 0.0
     assert material["parameters"] == {"E": 10.0, "nu": 0.3}
 
-    blocks = inp["element block"]
+    blocks = inp["element blocks"]
     assert isinstance(blocks, list)
     assert len(blocks) == 1
 
     block = blocks[0]
-    assert block["element_type"] == "t1d1"
-    assert block["name"] == "block-1"
-    assert block["material"] == "mat-1"
-    assert block["elements"] == "all"
-    assert block["element_properties"] == {"area": 1.0}
+    assert block["element"] == {
+        "type": "T1D1",
+        "properties": {"area": 1.0},
+    }
+    assert block["name"] == "BLOCK-1"
+    assert block["material"] == "MAT-1"
+    assert block["elements"] == "ALL"
 
-    # preprocess will create doftags/dofvals/matprops
+
+def test_preprocess_input():
+    file = user_input()
+    data = wundy.ui.load(file)
     d = wundy.ui.preprocess(data)
 
-    assert np.allclose(d["doftags"], [[1], [1], [0]])
-    assert np.allclose(d["dofvals"], [[0.0], [1.0], [2.0]])
-
-    assert isinstance(d["element blocks"], dict)
-    assert d["element blocks"] == {
-        "block-1": {
-            "material": "mat-1",
-            "elements": [0, 1],
-            "element_type": "t1d1",
-            "element_properties": {"area": 1.0},
-        }
+    assert isinstance(d["blocks"], list)
+    assert len(d["blocks"]) == 1
+    block = d["blocks"][0]
+    assert block["name"] == "BLOCK-1"
+    assert block["material"] == "MAT-1"
+    assert np.allclose(block["connect"], np.array([[0, 1], [1, 2]], dtype=int))
+    assert block["element"] == {
+        "type": "T1D1",
+        "properties": {
+            "area": 1.0,
+            "node_per_elem": 2,
+            "freedom_table": [(1, 0, 0, 0, 0, 0, 0, 0, 0, 0), (1, 0, 0, 0, 0, 0, 0, 0, 0, 0)],
+        },
     }
-    assert np.allclose(d["dload"], np.zeros((2, 1)))
+
+    assert isinstance(d["bcs"], list)
+
+    assert np.allclose(d["coords"], np.array([[0], [1], [2]]))
+    assert np.allclose(d["coords"], np.array([[0], [1], [2]]))
+
+    assert isinstance(d["nsets"], dict)
+    assert d["nsets"]["NSET-1"] == [1]
+
+    assert isinstance(d["bcs"], list)
+    bc = d["bcs"][0]
+    assert bc["nodes"] == [0]
+    assert bc["local_dof"] == 0
+    assert bc["name"] == "BOUNDARY-1"
+    assert bc["value"] == 0.0
+    assert bc["type"] == DIRICHLET
+    bc = d["bcs"][1]
+    assert bc["nodes"] == [1]
+    assert bc["local_dof"] == 0
+    assert bc["name"] == "BOUNDARY-2"
+    assert bc["value"] == 1.0
+    assert bc["type"] == DIRICHLET
+    bc = d["bcs"][2]
+    assert bc["nodes"] == [2]
+    assert bc["local_dof"] == 0
+    assert bc["value"] == 2.0
+    assert bc["name"] == "CLOAD-1"
+    assert bc["type"] == NEUMANN
+
+    assert isinstance(d["materials"], dict)
+    material = d["materials"]["MAT-1"]
+    assert material == {"type": "ELASTIC", "parameters": {"E": 10.0, "nu": 0.3}}
