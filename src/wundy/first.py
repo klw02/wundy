@@ -14,7 +14,66 @@ def first_fe_code(
     dloads: list[dict],
     materials: dict[str, Any],
     block_elem_map: dict[int, tuple[int, int]],
-) -> dict[str, Any]:
+) -> dict[str, Any]:  
+    """
+    Assemble and solve a 1D finite element system for an axial bar problem.
+
+    The function constructs the global stiffness matrix (K) and global force vector (F),
+    applies Dirichlet and Neumann boundary conditions, includes distributed loads, and
+    solves for nodal displacements.
+
+    Parameters
+    ----------
+    coords : (n_nodes, 1) ndarray of float
+        Array of nodal coordinates along the x-axis.
+    blocks : list of dict
+        Element block data containing element connectivity, material name,
+        and cross-sectional area.
+    bcs : list of dict
+        Boundary conditions, each with:
+        - type : {"DIRICHLET", "NEUMANN"}
+        - nodes : list of node indices
+        - local_dof : int
+        - value : float
+    dloads : list of dict
+        Distributed loads, each with keys:
+        - type : {"BX", "GRAV"}
+        - value : float (load or acceleration magnitude)
+        - direction : list[float] (±1 for 1D x-direction)
+        - elements : list[int] (element IDs)
+    materials : dict[str, Any]
+        Material data keyed by name, including:
+        - parameters : {"E": float}
+        - density : float (optional)
+    block_elem_map : dict[int, tuple[int, int]]
+        Map from element ID → (block index, local element index).
+
+    Returns
+    -------
+    solution : dict
+        {
+            "dofs": ndarray
+                Solved nodal displacements.
+            "stiff": ndarray
+                Assembled global stiffness matrix.
+            "force": ndarray
+                Assembled global force vector.
+        }
+
+    Raises
+    ------
+    ValueError
+        If element length is zero or distributed load direction is invalid.
+    NotImplementedError
+        If distributed load type is unsupported.
+
+    Notes
+    -----
+    - 1D axial bar elements with one degree of freedom per node.
+    - Dirichlet BCs applied using matrix partitioning.
+    - Compatible with wundy’s YAML input structure.
+    """
+    
     dof_per_node = 1
     num_node = coords.shape[0]
     num_dof = num_node * dof_per_node
@@ -117,9 +176,21 @@ def first_fe_code(
 
 
 def global_dof(node: int, local_dof: int, dof_per_node: int) -> int:
-    """Return the global degree of freedom index for a given node and local dof
-
-    NOTE: Assumes elements have uniform degrees of freedom across the mesh.
-
     """
+   Compute the global degree of freedom index for a given node and local DOF.
+
+   Parameters
+   ----------
+   node : int
+       Node index (zero-based).
+   local_dof : int
+       Local degree of freedom index for the node.
+   dof_per_node : int
+       Number of DOFs per node (1 for 1D problems).
+
+   Returns
+   -------
+   int
+       Global DOF index corresponding to (node, local_dof).
+   """
     return node * dof_per_node + local_dof

@@ -88,7 +88,7 @@ def validate_material_parameters(material: dict[str, dict[str, Any]]) -> bool:
     elastic = Schema(
         {
             "E": And(isnumeric, ispositive, error="E must be > 0"),
-            "nu": And(isnumeric, lambda x: -1.0 <= x < 0.5, error="nu must be between -1 and .5"),
+            Optional("nu", default=0.0): And(isnumeric, lambda x: -1.0 <= x < 0.5, error="nu must be between -1 and .5"),
         }
     )
     if normalize_case(material["type"]) == "ELASTIC":
