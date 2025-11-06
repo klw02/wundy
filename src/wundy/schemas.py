@@ -1,10 +1,10 @@
 from typing import Any
 
-from schema import And
-from schema import Optional
-from schema import Or
-from schema import Schema
-from schema import Use
+from schema import And # type: ignore
+from schema import Optional # type: ignore
+from schema import Or # type: ignore
+from schema import Schema # type: ignore
+from schema import Use # type: ignore
 
 NEUMANN = 0
 DIRICHLET = 1

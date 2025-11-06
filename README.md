@@ -6,10 +6,8 @@ One dimension finite element program
 ### Clone repository
 
 ```console
-git clone git@github.com:<user>/wundy
+git clone git@github.com:klw02/wundy
 ```
-
-where `user` is your user name if you forked the repo, `tjfulle` otherwise.
 
 ### Create virtual environment
 
