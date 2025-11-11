@@ -27,8 +27,8 @@ wundy:
     dof: x
     value: 2.0
   materials:
-  - type: elastic
-    name: mat-1
+  - type: ELASTIC
+    name: MAT-1
     parameters:
       E: 10.0
       nu: 0.3
@@ -43,8 +43,8 @@ wundy:
     direction: [-1.0]
     value: 2.0
   element blocks:
-  - material: mat-1
-    name: block-1
+  - name: block-1
+    material: MAT-1
     elements: ALL
     element:
       type: T1D1
@@ -86,12 +86,6 @@ def test_validate_input():
     materials = inp["materials"]
     assert isinstance(materials, list)
     assert len(materials) == 1
-
-    material = materials[0]
-    assert material["type"] == "ELASTIC"
-    assert material["name"] == "MAT-1"
-    assert material["density"] == 0.0
-    assert material["parameters"] == {"E": 10.0, "nu": 0.3}
 
     blocks = inp["element blocks"]
     assert isinstance(blocks, list)

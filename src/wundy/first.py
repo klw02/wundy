@@ -31,38 +31,43 @@ def gauss_points_weights(n_gauss: int = 2):
     return pts, wts
 
 # Element Level Modularization
-def elem_stiff(A: float, E: float, xe: NDArray[float], n_gauss: int = 2) -> NDArray[float]: # type: ignore
-    """Computes element stiffness matrix using gauss quadrature
-        Takes inputs:
-            A: Element Area
-            E: Young's Modulus
-            xe: Element Length
-            n_gauss: number of gauss points
-        Returns:
-            ke: element stiffness matrix"""
+def elem_stiff(A: float, materials: dict, xe: NDArray[float], n_gauss: int = 2) -> NDArray[float]: # type: ignore
+
+    mat_type = materials['type']
+    params = materials["parameters"]
+
     x1, x2 = xe[0, 0], xe[1, 0]
     L = x2 - x1
     if np.isclose(L, 0.0):
         raise ValueError("Zero-length element detected.")
 
-    # Linear shape functions in natural coordinates
-    # N1 = (1 - xi)/2, N2 = (1 + xi)/2
-    # Derivatives w.r.t xi
     dN_dxi = np.array([[-0.5, 0.5]])
-
     pts, wts = gauss_points_weights(n_gauss)
     ke = np.zeros((2, 2))
 
     for xi, w in zip(pts, wts):
-        # Jacobian for mapping from xi to x
         J = L / 2.0
         dN_dx = dN_dxi / J
-        B = dN_dx  # strain-displacement matrix
-        ke += B.T @ B * A * E * J * w
+        B = dN_dx
+
+        if mat_type == "ELASTIC":
+            E = params["E"]
+            ke += B.T @ B * A * E * J * w
+
+        elif mat_type == "NEOHOOKEAN":
+            E = params["E"]
+            nu = params.get("nu", 0.3)
+            mu = E / (2 * (1 + nu))
+            lam = E * nu / ((1 + nu) * (1 - 2 * nu))
+            # For small strain approximation: tangent stiffness ~ linear elastic
+            ke += B.T @ B * A * (lam + 2 * mu) * J * w
+
+        else:
+            raise ValueError(f"Unsupported material type: {mat_type}")
 
     return ke
 
-def elem_int_force(A: float, E: float, xe: NDArray[float], ue: NDArray[float], n_gauss: int = 2) -> float: # type: ignore
+def elem_int_force(A: float, material: dict, xe: NDArray[float], ue: NDArray[float], n_gauss: int = 2) -> float: # type: ignore
     """Compute element internal axial force (positive in tension)
         Takes Inputs:
             A: element area
@@ -72,6 +77,9 @@ def elem_int_force(A: float, E: float, xe: NDArray[float], ue: NDArray[float], n
             n_gauss: number of gauss points
         Returns:
             average internal force over element"""
+    mat_type = material["type"].upper()
+    params = material["parameters"]
+
     x1, x2 = xe[0, 0], xe[1, 0]
     L = x2 - x1
     if np.isclose(L, 0.0):
@@ -85,13 +93,25 @@ def elem_int_force(A: float, E: float, xe: NDArray[float], ue: NDArray[float], n
         J = L / 2.0
         dN_dx = dN_dxi / J
         B = dN_dx
-        strain = B @ ue
-        stress = E * strain
-        N = A * stress
-        N_total += N * J * w  # integrate over domain
+        strain = float(B @ ue)
 
-    # return average internal force over element
-    return float(N_total / (L))
+        if mat_type == "ELASTIC":
+            stress = params["E"] * strain
+
+        elif mat_type == "NEOHOOKEAN":
+            E = params["E"]
+            nu = params.get("nu", 0.3)
+            mu = E / (2 * (1 + nu))
+            lam = E * nu / ((1 + nu) * (1 - 2 * nu))
+            F = 1 + strain
+            stress = (mu * (F**2 - 1) + lam * np.log(F)) / F  # 1D Neo-Hookean stress
+
+        else:
+            raise ValueError(f"Unsupported material type: {mat_type}")
+
+        N_total += A * stress * J * w
+
+    return float(N_total / L)
 
 
 def elem_ext_force(A: float, q: float, he: float) -> NDArray[float]: # type: ignore
@@ -105,7 +125,7 @@ def elem_ext_force(A: float, q: float, he: float) -> NDArray[float]: # type: ign
     return q * he / 2 * np.ones(2)
 
 # Global Assembly
-def assem_glob_sys(coords, blocks, materials, dof_per_node=1, n_gauss: int = 2):
+def assem_glob_sys(coords, blocks, materials: dict, dof_per_node=1, n_gauss: int = 2):
     """Assemble global stiffness matrix from element stiffness contributions
         Takes Input:
             coords: element coordinates
@@ -127,7 +147,7 @@ def assem_glob_sys(coords, blocks, materials, dof_per_node=1, n_gauss: int = 2):
         for nodes in block["connect"]:
             eft = [glob_dof(n, j, dof_per_node) for n in nodes for j in range(dof_per_node)]
             xe = coords[nodes]
-            ke = elem_stiff(A, E, xe, n_gauss)
+            ke = elem_stiff(A, mat, xe, n_gauss)
             K[np.ix_(eft, eft)] += ke
     return K
 
@@ -236,12 +256,13 @@ def compute_int_forces(coords, blocks, materials, dofs):
             global internal forces"""
     elem_forces = []
     for block in blocks:
+        mat = materials[block["material"]]
         A = block["element"]["properties"]["area"]
         E = materials[block["material"]]["parameters"]["E"]
         for nodes in block["connect"]:
             xe = coords[nodes]
             ue = dofs[nodes]
-            N = elem_int_force(A, E, xe, ue)
+            N = elem_int_force(A, mat, xe, ue)
             elem_forces.append(N)
     return np.array(elem_forces)
 

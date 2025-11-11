@@ -26,20 +26,20 @@ def analytical_internal_force(A, E, L, u):
 # Tests for Gauss quadrature in stiffness and internal force routines
 # ------------------------------------------------------------------------------
 
-def test_elem_stiff_gauss_equivalence():
+def test_elem_stiff_gauss_equivalence(mat):
     """
     Verify that the Gauss quadrature-based stiffness matrix matches
     the analytical 1D bar element stiffness for a linear displacement field.
     """
-    A, E = 2.0, 210e3
+    A = 2.0
     xe = np.array([[0.0], [2.0]])  # 2m element
-    ke_num = wf.elem_stiff(A, E, xe)  # computed with quadrature
-    ke_exact = analytical_stiffness(A, E, 2.0)
+    ke_num = wf.elem_stiff(A, mat, xe)  # computed with quadrature
+    ke_exact = analytical_stiffness(A, mat, 2.0)
     assert np.allclose(ke_num, ke_exact, atol=1e-8), \
         "Gauss quadrature stiffness does not match analytical stiffness"
 
 
-def test_elem_stiff_convergence_two_point():
+def test_elem_stiff_convergence_two_point(mat):
     """
     Check that increasing quadrature points (if implemented) converges
     to the exact stiffness matrix.
@@ -49,8 +49,8 @@ def test_elem_stiff_convergence_two_point():
     xe = np.array([[0.0], [L]])
 
     # single-point integration (less accurate for nonlinear fields)
-    ke_1pt = wf.elem_stiff(A, E, xe, n_gauss=1)
-    ke_2pt = wf.elem_stiff(A, E, xe, n_gauss=2)
+    ke_1pt = wf.elem_stiff(A, mat, xe, n_gauss=1)
+    ke_2pt = wf.elem_stiff(A, mat, xe, n_gauss=2)
     ke_exact = analytical_stiffness(A, E, L)
 
     # 2-point rule should be closer to exact
@@ -59,7 +59,7 @@ def test_elem_stiff_convergence_two_point():
     assert err_2 <= err_1, "2-point Gauss integration should be more accurate"
 
 
-def test_elem_internal_force_gauss():
+def test_elem_internal_force_gauss(mat):
     """
     Verify that the internal force vector computed using Gauss quadrature
     reproduces the exact analytical result for a constant strain state.
@@ -67,13 +67,13 @@ def test_elem_internal_force_gauss():
     A, E = 1.0, 200.0
     xe = np.array([[0.0], [1.0]])
     ue = np.array([0.0, 0.01])  # uniform extension
-    fint_num = wf.elem_int_force(A, E, xe, ue)
+    fint_num = wf.elem_int_force(A, mat, xe, ue)
     fint_exact = analytical_internal_force(A, E, 1.0, ue)
     assert np.isclose(fint_num, fint_exact, atol=1e-8), \
         "Internal force (Gauss integration) mismatch with analytical result"
 
 
-def test_elem_internal_force_sign_and_scaling():
+def test_elem_internal_force_sign_and_scaling(mat):
     """
     Check that the internal force direction and scaling behave correctly
     with positive and negative displacements.
@@ -83,11 +83,11 @@ def test_elem_internal_force_sign_and_scaling():
 
     # positive extension
     ue_pos = np.array([0.0, 0.02])
-    fint_pos = wf.elem_int_force(A, E, xe, ue_pos)
+    fint_pos = wf.elem_int_force(A, mat, xe, ue_pos)
 
     # compression
     ue_neg = np.array([0.02, 0.0])
-    fint_neg = wf.elem_int_force(A, E, xe, ue_neg)
+    fint_neg = wf.elem_int_force(A, mat, xe, ue_neg)
 
     assert np.isclose(fint_pos, -fint_neg, atol=1e-8), \
         "Internal force sign not consistent for tension/compression"

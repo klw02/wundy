@@ -91,13 +91,27 @@ def validate_material_parameters(material: dict[str, dict[str, Any]]) -> bool:
             Optional("nu", default=0.0): And(isnumeric, lambda x: -1.0 <= x < 0.5, error="nu must be between -1 and .5"),
         }
     )
-    if normalize_case(material["type"]) == "ELASTIC":
+
+    neo_hookean = Schema(
+        {
+            "E": And(isnumeric, ispositive, error="E must be > 0"),
+            Optional("nu", default=0.3): And(
+                isnumeric, lambda x: -1.0 <= x < 0.5, error="nu must be between -1 and 0.5"
+            ),
+        }
+    )
+
+    mat_type = normalize_case(material["type"])
+
+    if mat_type == "ELASTIC":
         elastic.validate(material["parameters"])
+    elif mat_type == "NEOHOOKEAN":
+        neo_hookean.validate(material["parameters"])
     else:
-        raise ValueError(f"Unknown material {material['type']!r}")
+        raise ValueError(f"Unknown material type {material['type']!r}")
+    
     return True
-
-
+        
 nodes_schema = Schema(
     And(
         list,
