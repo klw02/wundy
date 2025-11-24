@@ -1,67 +1,91 @@
 # wundy
-One dimension finite element program
+One-dimensional finite element program
 
-## Install
+---
 
-### Clone repository
+## Installation
 
-```console
+### 1. Clone the Repository
+
+'''console
 git clone git@github.com:klw02/wundy
-```
 
-### Create virtual environment
+### 2. Create a Virtual Environment
 
-```console
+'''console
 python3 -m venv venv
-source activate venv/bin/activate
-```
+source venv/bin/activate
 
-### Install in editable mode
+### 3. Install in Editable Mode
 
-```console
+'''console
 cd wundy
 python3 -m pip install -e .
-```
 
-## Test
-
-In the `wundy` directory, execute
-
-```console
+### 4. Running Tests
+'''console
 pytest
-```
-## 🧩 User Input Format
 
-WUNDY reads model definitions from a **YAML input file** that specifies the geometry, materials, elements, boundary conditions, and loads.
+## User Input
+wundy reads a model description from a YAML input file.
+The supported input schemas are specified below:
 
-All input files must begin with the top-level key:
+### Nodes
+Defines the coordinates and ID of each node:
 
-```yaml
-wundy:
+nodes: [[id, x], [id, x], ....]
 
-Below are the supported sections and their required formats
+Example input:
 
-nodes: [[id, x], [id, x], ...]
+nodes: [[1, 0.0], [2, 1.0], [3, 2.0]]
 
-elements: [[element_id, start_node, end_node], ...]
+### Elements
+Defines element ID and connectivity:
+
+elements: [[element_id, start_node, end_node], ....]
+
+Example input:
+
+elements: [[1, 1, 2], [2, 2, 3]]
+
+### Materials
+Defines material type and associated properties
+Example input:
 
 materials:
   - type: elastic
-    name: mat-1
+    name: steel
     parameters:
-      E: 10.0
+      E: 210e9
       nu: 0.3
-    density: 1.0
+    density: 7800
+
+Supported Fields:
+  type: ELASTIC or NEOHOOK (NEOHOOK validation not yet implemented)
+  parameters:
+    E: Youngs Modulus (required)
+    nu: Poisson's Ratio (optional, default = 0.0)
+  density: mass density (optional, default - 0.0)
+
+### Element Blocks
+Groups material assignments and element properties
+Example Input:
 
 element blocks:
   - name: block-1
-    material: mat-1
-    elements: all
+    material: steel
+    elements: [1, 2]
     element:
       type: T1D1
       properties:
         area: 1.0
-    
+
+### Boundary Conditions
+Assigns boundary conditions to prescribed node
+Supports DIRICHLET boundary condition (prescribed displacement)
+Supprts NEUMANN boundary condition (prescribed traction/force)
+Example Input:
+
 boundary conditions:
   - name: fix-left
     type: DIRICHLET
@@ -69,11 +93,15 @@ boundary conditions:
     nodes: [1]
     value: 0.0
 
-  - name: load-right
+  - name: right-force
     type: NEUMANN
     dof: X
     nodes: [3]
     value: 5.0
+
+### Distributed Loads
+Applies a constant load over prescribed elements
+Example Input:
 
 distributed loads:
   - name: distload
@@ -82,13 +110,27 @@ distributed loads:
     value: 2.0
     elements: [1, 2]
 
+Valid Types:
+- BX: mechanical distributed load
+- GRAV: gravitational body force
+
+### Node Sets (Optional)
+Example input:
+
 node sets:
   - name: LEFT
-    nodes: [1, 2]
+    nodes: [1]
+
+### Element Sets (Optional)
+Example Input:
 
 element sets:
   - name: CENTER
-    elements: [2]
+    elements [2]
+
+### Concentrated Loads (Optional)
+Equivalent to a NEUMANN boundary condition, but without specifying type
+Example Input:
 
 concentrated loads:
   - name: point-load
@@ -96,11 +138,13 @@ concentrated loads:
     nodes: [3]
     value: 5.0
 
-Full Example Input
-
+## Full Example YAML Input
 wundy:
   nodes: [[1, 0.0], [2, 1.0], [3, 2.0]]
-  elements: [[1, 1, 2], [2, 2, 3]]
+
+  elements:
+    - [1, 1, 2]
+    - [2, 2, 3]
 
   materials:
     - type: elastic
@@ -113,7 +157,7 @@ wundy:
   element blocks:
     - name: block-1
       material: mat-1
-      elements: all
+      elements: [1, 2]
       element:
         type: T1D1
         properties:
@@ -132,5 +176,5 @@ wundy:
       direction: [1]
       value: 2.0
       elements: [1, 2]
-     
-     
+
+

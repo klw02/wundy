@@ -99,7 +99,7 @@ def test_validate_input():
     assert block["name"] == "BLOCK-1"
     assert block["material"] == "MAT-1"
     assert block["elements"] == "ALL"
-
+    return None
 
 def test_preprocess_input():
     file = user_input()
@@ -152,3 +152,4 @@ def test_preprocess_input():
     assert isinstance(d["materials"], dict)
     material = d["materials"]["MAT-1"]
     assert material == {"type": "ELASTIC", "parameters": {"E": 10.0, "nu": 0.3}}
+    return None

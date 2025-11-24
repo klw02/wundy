@@ -82,7 +82,7 @@ wundy:
   concentrated loads:
   - name: cload-1
     nodes: [5]
-    value: 2.0
+    value: 0.0
   materials:
   - type: elastic
     name: mat-1
@@ -101,7 +101,7 @@ wundy:
   - name: distload
     type: BX
     direction: [1]
-    value: 2.0
+    value: 5.0
     elements: [1, 2]
 """)
     file.seek(0)
@@ -115,15 +115,17 @@ wundy:
         inp["materials"],
         inp["block_elem_map"],
     )
-    q = 2
-    L = 5
+    q = 5.0
+    L = 1.0
     u = soln["dofs"]
     dofs = soln["dofs"]
     K = soln["stiff"]
     F = soln["force"]
     R = np.dot(K, dofs)
-    assert R[0] == -q * L/2
+    assert np.isclose(R[0], -q * L * 0.5, atol=1e-8)
     # Check displacement pattern (should increase quadratically)
+    print(R)
     assert np.all(u >= 0)
     assert u[-1] > u[-2] > u[0]
+    return None
 

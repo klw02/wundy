@@ -1,10 +1,10 @@
 from typing import Any
 
-from schema import And # type: ignore
-from schema import Optional # type: ignore
-from schema import Or # type: ignore
-from schema import Schema # type: ignore
-from schema import Use # type: ignore
+from schema import And  # type: ignore
+from schema import Optional  # type: ignore
+from schema import Or  # type: ignore
+from schema import Schema  # type: ignore
+from schema import Use  # type: ignore
 
 NEUMANN = 0
 DIRICHLET = 1
@@ -83,30 +83,30 @@ def validate_element(elem: dict[str, Any]) -> bool:
         raise ValueError(f"Unknown element type {elem['type']!r}")
     return True
 
+def valid_material_type(name: str) -> bool:
+    return normalize_case(name) in {"ELASTIC", "NEOHOOK"}
+
 
 def validate_material_parameters(material: dict[str, dict[str, Any]]) -> bool:
     elastic = Schema(
         {
             "E": And(isnumeric, ispositive, error="E must be > 0"),
-            Optional("nu", default=0.0): And(isnumeric, lambda x: -1.0 <= x < 0.5, error="nu must be between -1 and .5"),
+            Optional("nu", default=0.0): And(isnumeric, lambda x: -1.0 <= x < 0.5, error="nu must be between -1 and .5"),        
         }
     )
 
-    neo_hookean = Schema(
+    neohook = Schema(
         {
-            "E": And(isnumeric, ispositive, error="E must be > 0"),
-            Optional("nu", default=0.3): And(
-                isnumeric, lambda x: -1.0 <= x < 0.5, error="nu must be between -1 and 0.5"
-            ),
+            "mu": And(isnumeric, ispositive),
+            "lam": And(isnumeric, ispositive),
+            Optional("E", default=None): And(isnumeric, ispositive, error="E must be > 0"),
         }
     )
 
-    mat_type = normalize_case(material["type"])
-
-    if mat_type == "ELASTIC":
+    if normalize_case(material["type"]) == "ELASTIC":
         elastic.validate(material["parameters"])
-    elif mat_type == "NEOHOOKEAN":
-        neo_hookean.validate(material["parameters"])
+    elif normalize_case(material["type"]) == "NEOHOOK":
+        neohook.validate(material["parameters"])
     else:
         raise ValueError(f"Unknown material type {material['type']!r}")
     
@@ -199,7 +199,7 @@ dload_schema = Schema(
 material_schema = Schema(
     And(
         {
-            "type": And(str, Use(normalize_case)),
+            "type": And(str, Use(normalize_case), valid_material_type),
             "name": And(str, Use(normalize_case)),
             "parameters": {str: object},
             Optional("density", default=0.0): And(isnumeric, ispositive),

@@ -6,7 +6,13 @@ from numpy.typing import NDArray
 from .schemas import DIRICHLET
 from .schemas import NEUMANN
 
-# Gauss Quadrature Helper
+# TODO: begin implementing neohook material
+# TODO: compute element residual vector
+# TODO: implement newton-raphson solver
+
+def global_dof(node: int, local_dof: int, dof_per_node: int) -> int:
+    return node * dof_per_node + local_dof
+
 def gauss_points_weights(n_gauss: int = 2):
     """Return Gauss points and weights for 1D integration on [-1, 1]
         Takes Inputs:
@@ -30,194 +36,192 @@ def gauss_points_weights(n_gauss: int = 2):
         raise ValueError(f"Unsupported number of Gauss points: {n_gauss}")
     return pts, wts
 
-# Element Level Modularization
-def elem_stiff(A: float, materials: dict, xe: NDArray[float], n_gauss: int = 2) -> NDArray[float]: # type: ignore
+def elem_stiff(material: dict[str, Any], 
+               xe: NDArray[np.float64], 
+               props: dict[str, Any],
+               ue: NDArray[np.float64],
+               n_gauss: int = 2) -> NDArray[np.float64]:
+    """ Compute the 1D element stiffness matrix for a T1D1 bar element
+     Parameters
+    ------------------
+    material: dict
+        material data, must contain 'type' and 'parameters' including 'E'
+    xe: (2,1) ndarray
+        element nodal coordinates [[x1], [x2]]
+    props: dict
+        element property dictionary containing 'properties' -> {'area': A}
+    n_gauss: int, optional
+        number of gauss integration points (default 2, support up to 3)
+    
+     Returns
+    ---------
+    ke: (2,2) ndarray
+        element stiffness matrix
+    
+     Notes
+    -------
+    - Currently support linear elastic materials, support for neohookean material types planned"""
 
-    mat_type = materials['type']
-    params = materials["parameters"]
-
-    x1, x2 = xe[0, 0], xe[1, 0]
+    mat_type = material["type"]
+    params = material["parameters"]
+    A = props["properties"]["area"]
+    x1, x2 = xe[0,0], xe[1,0]
     L = x2 - x1
     if np.isclose(L, 0.0):
-        raise ValueError("Zero-length element detected.")
+        raise ValueError("Zero Length Element Detected")
 
-    dN_dxi = np.array([[-0.5, 0.5]])
+    dN_dksi = np.array([[-0.5, 0.5]])
     pts, wts = gauss_points_weights(n_gauss)
-    ke = np.zeros((2, 2))
+    ke = np.zeros((2,2))
 
-    for xi, w in zip(pts, wts):
-        J = L / 2.0
-        dN_dx = dN_dxi / J
+    for ksi, w in zip(pts, wts):
+        dx_dksi = np.dot(dN_dksi, xe)
+        dksi_dx = 1/dx_dksi.item()
+        dN_dx = dN_dksi * dksi_dx
         B = dN_dx
-
+        J = dx_dksi
+        
         if mat_type == "ELASTIC":
             E = params["E"]
             ke += B.T @ B * A * E * J * w
+            print(ke)
+        
+        elif mat_type == "NEOHOOK":
+            mu = params["mu"]
+            lam = params["lam"]
 
-        elif mat_type == "NEOHOOKEAN":
-            E = params["E"]
-            nu = params.get("nu", 0.3)
-            mu = E / (2 * (1 + nu))
-            lam = E * nu / ((1 + nu) * (1 - 2 * nu))
-            # For small strain approximation: tangent stiffness ~ linear elastic
-            ke += B.T @ B * A * (lam + 2 * mu) * J * w
+            E_lin = lam + 2 * mu
+
+
+            ke += (B.T @ B) * A * E_lin * J * w
 
         else:
-            raise ValueError(f"Unsupported material type: {mat_type}")
+            raise ValueError("Unsupported material type: {mat_type}")
 
     return ke
 
-def elem_int_force(A: float, material: dict, xe: NDArray[float], ue: NDArray[float], n_gauss: int = 2) -> float: # type: ignore
-    """Compute element internal axial force (positive in tension)
-        Takes Inputs:
-            A: element area
-            E: Young's Modulus
-            xe: element length
-            ue: element displacement
-            n_gauss: number of gauss points
-        Returns:
-            average internal force over element"""
-    mat_type = material["type"].upper()
-    params = material["parameters"]
+def elem_int_force(props: dict[str, Any], 
+                   material: dict[str, Any],
+                   xe: NDArray[np.float64], 
+                   ue: NDArray[np.float64]) -> float:
+    """Compute the internal axial force for a 1D bar element
+     Parameters
+    ------------
+    props: dict
+        element properties dictionary containing 'properties': {'area': A}
+    material: dict
+        material dictionary containing 'type' and 'parameters' including 'E'
+    xe: (2,1) ndarray
+        element nodal coordinates [[x1], [x2]]
+    ue: (2, ) ndarray
+        element nodal displacement [u1, u2]
+    
+     Returns
+    ---------
+    N: float
+        internal axial force in the element (positive in tension)
+    
+     Notes
+    -------
+    - Currently supports linear elastic materials, support for neohookean materials is planned"""
 
-    x1, x2 = xe[0, 0], xe[1, 0]
+    mat_type = material["type"]
+    E = material["parameters"].get("E", None)
+    mu = material["parameters"].get("mu", None)
+    lam = material["parameters"].get("lam", None)
+    A = props["properties"]["area"]
+
+    x1, x2 = xe[:, 0]
     L = x2 - x1
-    if np.isclose(L, 0.0):
-        raise ValueError("Zero-length element detected.")
+    strain = (ue[1] - ue[0]) / L
+    F = 1.0 + strain
 
-    dN_dxi = np.array([[-0.5, 0.5]])
-    pts, wts = gauss_points_weights(n_gauss)
+    if mat_type == "ELASTIC":
+        stress = E * strain
+        N = A * stress
 
-    N_total = 0.0
-    for xi, w in zip(pts, wts):
-        J = L / 2.0
-        dN_dx = dN_dxi / J
-        B = dN_dx
-        strain = float(B @ ue)
+    elif mat_type == "NEOHOOK":
+        stress = mu * (F - 1.0/F) + lam * (np.log(F) / F)
+        N = A * stress
+    else:
+        raise ValueError("Unsupported material type: {mat_type}")
+    
+    return N
+ 
+def elem_ext_force(props: dict[str, Any], 
+                   material: dict[str, Any],
+                   xe: NDArray[np.float64],
+                   dload: list[dict],
+                   g: float = 9.81) -> NDArray[np.float64]:
+    """Compute the external force for a 1D bar element
+     Parameters
+    ------------
+    props: dict
+        element properties dictionary containing 'properties': {'area': A}
+    material: dict
+        material dictionary containing 'parameters' including density 'rho'
+    dload: dict
+        distributed load description containg 'value' (q)
+    xe: (2,1) ndarray
+        element nodal coordinates [[x1, x2]]
+    g: float, optional
+        gravitational acceleration (default 9.81)
+    
+     Returns
+    ---------
+    q_ext: (2, ) ndarray
+        external equivalent nodal forces from q and graviational body forces
+    
+     Notes
+    -------
+    - Assumes constant distributed load 'q'
+    - body force is assumed to be gravitational"""
 
-        if mat_type == "ELASTIC":
-            stress = params["E"] * strain
+    A = props["properties"]["area"]
+    q = float(dload["value"])
+    rho = float(material.get("density", 0.0))
 
-        elif mat_type == "NEOHOOKEAN":
-            E = params["E"]
-            nu = params.get("nu", 0.3)
-            mu = E / (2 * (1 + nu))
-            lam = E * nu / ((1 + nu) * (1 - 2 * nu))
-            F = 1 + strain
-            stress = (mu * (F**2 - 1) + lam * np.log(F)) / F  # 1D Neo-Hookean stress
+    if dload["type"] not in ("BX", "GRAV"):
+        raise ValueError(f"Unsupported distributed load type: {dload['type']}")
 
-        else:
-            raise ValueError(f"Unsupported material type: {mat_type}")
+    x1, x2 = xe[:,0]
+    L = x2 - x1
 
-        N_total += A * stress * J * w
+    q_ext = q * (L / 2) 
 
-    return float(N_total / L)
+    return q_ext
 
+def newton_solve(
+        coords: NDArray[np.float64],
+        blocks: list[dict],
+        bcs: list[dict],
+        dloads: list[dict],
+        materials: dict[str, Any],
+        block_elem_map: dict[int, tuple[int, int]],
+        max_iters: int = 100,
+        tol: float = 1e-10,
+):
+    # TODO: description of newton solver
 
-def elem_ext_force(A: float, q: float, he: float) -> NDArray[float]: # type: ignore
-    """Compute equivalent nodal forces for a uniform distributed load q
-        Takes Inputs:
-            A: Element Area
-            q: element distributed load
-            he: element length
-        Returns:
-            external element force"""
-    return q * he / 2 * np.ones(2)
-
-# Global Assembly
-def assem_glob_sys(coords, blocks, materials: dict, dof_per_node=1, n_gauss: int = 2):
-    """Assemble global stiffness matrix from element stiffness contributions
-        Takes Input:
-            coords: element coordinates
-            blocks: element blocks (see readme)
-            materials: material parameters (see readme)
-            dof_per_node: degrees of freedom per node
-            n_gauss: number of gauss points
-        Returns:
-            K: global stiffness matrix"""
+    dof_per_node = 1
     num_node = coords.shape[0]
     num_dof = num_node * dof_per_node
-    K = np.zeros((num_dof, num_dof))
 
-    for block in blocks:
-        A = block["element"]["properties"]["area"]
-        mat = materials[block["material"]]
-        E = mat["parameters"]["E"]
-
-        for nodes in block["connect"]:
-            eft = [glob_dof(n, j, dof_per_node) for n in nodes for j in range(dof_per_node)]
-            xe = coords[nodes]
-            ke = elem_stiff(A, mat, xe, n_gauss)
-            K[np.ix_(eft, eft)] += ke
-    return K
-
-def assem_ext_loads(coords, blocks, materials, dloads, block_elem_map, dof_per_node=1):
-    """Assemble distributed loads into the global force vector
-        Takes Inputs:
-            coords: element coordinates
-            blocks: element blocks (see readme)
-            materials: material parameters (see readme)
-            dloads: distributed loads
-            block_elem_map: assign blocks to elements
-            dof_per_node: degrees of freedom per node
-        Returns:
-            F: global force vector"""
-    num_node = coords.shape[0]
-    F = np.zeros(num_node * dof_per_node)
-
-    for dload in dloads:
-        dtype = dload["type"]
-        direction = np.array(dload["direction"], dtype=float)
-        sign = np.sign(direction[0])
-        if sign == 0.0:
-            raise ValueError(f"Invalid distributed load direction {direction}")
-
-        for eid in dload["elements"]:
-            block_index, local_index = block_elem_map[eid]
-            block = blocks[block_index]
-            nodes = block["connect"][local_index]
-            xe = coords[nodes]
-            he = xe[1, 0] - xe[0, 0]
-            A = block["element"]["properties"]["area"]
-            mat = materials[block["material"]]
-
-            if dtype == "BX":
-                q = dload["value"] * sign
-            elif dtype == "GRAV":
-                rho = mat["density"]
-                q = rho * A * dload["value"] * sign
-            else:
-                raise NotImplementedError(f"dload type {dtype!r} not supported")
-
-            eft = [glob_dof(n, j, dof_per_node) for n in nodes for j in range(dof_per_node)]
-            Fe = elem_ext_force(A, q, he)
-            F[eft] += Fe
-    return F
-
-def apply_bound_cond(K, F, bcs, dof_per_node=1):
-    """Apply Dirichlet and Neumann BCs
-        Takes Inputs:
-            K: global stiffness matrix
-            F: global force vector
-            dof_per_node: degrees of freedom per node
-        Returns:
-            F: Adds boundary conditions to global force vector
-            Array for prescribed degrees of freedom
-            Array for prescribed boundary conditions at prescribed dofs"""
-    num_dof = F.size
+    prescribed = {}
     for bc in bcs:
-        if bc["type"] == NEUMANN:
-            for n in bc["nodes"]:
-                I = glob_dof(n, bc["local_dof"], dof_per_node)
-                F[I] += bc["value"]
+        if "node" in bc and "nodes" not in bc:
+            bc["nodes"] = [bc["node"]]
+    
+        if "dof" in bc and "local_dof" not in bc:
+            bc["local_dof"] = bc["dof"]
 
-    prescribed_dofs, prescribed_vals = [], []
-    for bc in bcs:
         if bc["type"] == DIRICHLET:
             for n in bc["nodes"]:
-                I = glob_dof(n, bc["local_dof"], dof_per_node)
-                prescribed_dofs.append(I)
-                prescribed_vals.append(bc["value"])
+                I = global_dof(n, bc["local_dof"], dof_per_node)
+                prescribed[I] = bc["value"]
+    
+    prescribed_dofs = np.array(list(prescribed.keys()), dtype=int)
+    prescribed_vals = np.array(list(prescribed.values()), dtype=float)
 
     return F, np.array(prescribed_dofs), np.array(prescribed_vals)
 
@@ -235,66 +239,100 @@ def sys_solve(K, F, prescribed_dofs, prescribed_vals):
     all_dofs = np.arange(num_dof)
     free_dofs = np.setdiff1d(all_dofs, prescribed_dofs)
 
-    Kff = K[np.ix_(free_dofs, free_dofs)]
-    Kfp = K[np.ix_(free_dofs, prescribed_dofs)]
-    Ff = F[free_dofs] - Kfp.dot(prescribed_vals)
+    u = np.zeros(num_dof, dtype=float)
 
-    uf = np.linalg.solve(Kff, Ff)
-    u = np.zeros(num_dof)
-    u[free_dofs] = uf
-    u[prescribed_dofs] = prescribed_vals
-    return u
+    for iter in range(1, max_iters + 1):
+        R = np.zeros(num_dof, dtype=float)
+        Kt = np.zeros((num_dof, num_dof), dtype=float)
 
-def compute_int_forces(coords, blocks, materials, dofs):
-    """Compute internal axial force for each element
-        Takes Inputs:
-            coords: nodal coordinates
-            blocks: element blocks (see readme)
-            materials: material parameters (see readme)
-            dofs: element degrees of freedom
-        Returns:
-            global internal forces"""
-    elem_forces = []
-    for block in blocks:
-        mat = materials[block["material"]]
-        A = block["element"]["properties"]["area"]
-        E = materials[block["material"]]["parameters"]["E"]
-        for nodes in block["connect"]:
-            xe = coords[nodes]
-            ue = dofs[nodes]
-            N = elem_int_force(A, mat, xe, ue)
-            elem_forces.append(N)
-    return np.array(elem_forces)
+        for elem_id, (blk_i, loc_i) in block_elem_map.items():
+            block = blocks[blk_i]
+            nodes = block["connect"][loc_i]
+            xe = coords[nodes].flatten()
+            props = block["element"]
+            material = materials[block["material"]]
+            eft = np.array([n * dof_per_node for n in nodes], dtype=int)
+            ue = u[eft]
 
-def glob_dof(node, local_dof, dof_per_node):
-    """Global degree of freedom index
-        Takes Inputs:
-            node: global nodes
-            local_dof: nodal degrees of freedom
-            dof_per_node: degrees of freedom per node
-        Returns:
-            global degrees of freedom"""
-    return node * dof_per_node + local_dof
+            qe = elem_int_force(props, material, xe, ue)
+            qe = np.asarray(qe).reshape(-1)
+            R[eft] += qe
+            ke = elem_stiff(material, xe, props, ue)
+            Kt[np.ix_(eft, eft)] += np.asarray(ke)
 
-# Put it all together
-def first_fe_code(coords: NDArray[float], blocks: list[dict],bcs: list[dict],dloads: list[dict],materials: dict[str, Any],block_elem_map: dict[int, tuple[int, int]]) -> dict[str, Any]:  # type: ignore
-    """
-    Assemble and solve a 1D finite element system for an axial bar problem from module functions above
-        Takes Inputs:
-            coords: nodal coordinates
-            blocks: element blocks (see readme)
-            bcs: boundary conditions
-            dloads: distributed loads (see readme)
-            materials: material parameters (see readme)
-            block_elem_map: assign blocks to elements 
-        Returns:
-            solution: returns global degrees of freedom, global stiffness matrix, and global force vector"""
-    K = assem_glob_sys(coords, blocks, materials)
-    F = assem_ext_loads(coords, blocks, materials, dloads, block_elem_map)
-    F, prescribed_dofs, prescribed_vals = apply_bound_cond(K, F, bcs)
-    dofs = sys_solve(K, F, prescribed_dofs, prescribed_vals)
-    elem_forces = compute_int_forces(coords, blocks, materials, dofs)
+        Fext = np.zeros(num_dof, dtype=float)
 
-    solution = {"dofs": dofs, "stiff": K, "force": F}
+        for bc in bcs:
+            if "node" in bc and "nodes" not in bc:
+                bc["nodes"] = [bc["node"]]
+    
+            if "dof" in bc and "local_dof" not in bc:
+                bc["local_dof"] = bc["dof"]
+            
+            if bc["type"] == NEUMANN:
+                for n in bc["nodes"]:
+                    I = global_dof(n, bc["local_dof"], dof_per_node)
+                    Fext[I] += bc["value"]
 
-    return solution
+        for dload in dloads:
+            for eid in dload["elements"]:
+                blk_idx, loc_idx = block_elem_map[eid]
+                block = blocks[blk_idx]
+                material = materials[block["material"]]
+                props = block["element"]
+                nodes = block["connect"][loc_idx]
+
+                xe = coords[nodes].flatten()
+                qext = elem_ext_force(props, material, xe, dload, g=9.81)
+                eft = np.array([n * dof_per_node for n in nodes], dtype=int)
+                qext = np.asarray
+                Fext[eft] += qext
+        R -= Fext
+
+        R_reduced = R[free_dofs]
+        Kt_ff = Kt[np.ix_(free_dofs, free_dofs)]
+
+        residual_norm = np.linalg.norm(R_reduced)
+
+        if residual_norm < tol:
+            return {
+                "dofs": u,
+                "u": u,
+                "num_iter": iter,
+                "converged": True,
+                "stiff": Kt,
+                "force": Fext,
+            }
+        
+        du_f = np.linalg.solve(Kt_ff, -R_reduced)
+        u[free_dofs] += du_f
+
+        u[prescribed_dofs] = prescribed_vals
+    
+    return {
+        "dofs": u,
+        "u": u,
+        "num_iter": max_iters,
+        "residual_norm": residual_norm,
+        "stiff": Kt,
+        "force": Fext,
+        "converged": False,
+    }
+
+def first_fe_code(
+    coords: NDArray[np.float64],
+    blocks: list[dict],
+    bcs: list[dict],
+    dloads: list[dict],
+    materials: dict[str, Any],
+    block_elem_map: dict[int, tuple[int, int]],
+) -> dict[str, Any]:  
+
+    return newton_solve(
+        coords=coords,
+        blocks=blocks,
+        bcs=bcs,
+        dloads=dloads,
+        materials=materials,
+        block_elem_map=block_elem_map,
+    )
