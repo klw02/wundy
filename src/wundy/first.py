@@ -11,6 +11,7 @@ from .schemas import NEUMANN
 # TODO: implement newton-raphson solver
 
 def global_dof(node: int, local_dof: int, dof_per_node: int) -> int:
+    """Map a node and local DOF index to the corresponding global DOF."""
     return node * dof_per_node + local_dof
 
 def gauss_points_weights(n_gauss: int = 2):
@@ -201,7 +202,7 @@ def newton_solve(
         max_iters: int = 100,
         tol: float = 1e-10,
 ):
-    # TODO: description of newton solver
+    """Iteratively solve for displacements using a Newton–Raphson procedure."""
 
     dof_per_node = 1
     num_node = coords.shape[0]
@@ -326,7 +327,9 @@ def first_fe_code(
     dloads: list[dict],
     materials: dict[str, Any],
     block_elem_map: dict[int, tuple[int, int]],
-) -> dict[str, Any]:  
+) -> dict[str, Any]:
+
+    """Wrapper for invoking the Newton solver on a 1D finite element model."""
 
     return newton_solve(
         coords=coords,
