@@ -88,11 +88,7 @@ def elem_stiff(material: dict[str, Any],
             print(ke)
         
         elif mat_type == "NEOHOOK":
-            mu = params["mu"]
-            lam = params["lam"]
-
-            E_lin = lam + 2 * mu
-
+            E_lin = params.get("E", params["mu"])
 
             ke += (B.T @ B) * A * E_lin * J * w
 
@@ -188,7 +184,7 @@ def elem_ext_force(props: dict[str, Any],
     x1, x2 = xe[:,0]
     L = x2 - x1
 
-    q_ext = q * (L / 2) 
+    q_ext = q * (L / 6)
 
     return q_ext
 
@@ -224,19 +220,6 @@ def newton_solve(
     prescribed_dofs = np.array(list(prescribed.keys()), dtype=int)
     prescribed_vals = np.array(list(prescribed.values()), dtype=float)
 
-    return F, np.array(prescribed_dofs), np.array(prescribed_vals)
-
-# Solve System
-def sys_solve(K, F, prescribed_dofs, prescribed_vals):
-    """Solve Ku = F given prescribed DOFs
-        Takes Inputs:
-            K: global stiffness matrix
-            F: global force vector
-            prescribed_dofs: degrees of freedom with a prescribed boundary condition
-            prescribed_vals: values of bc at prescribed dofs
-        Returns:
-            u: global displacement"""
-    num_dof = F.size
     all_dofs = np.arange(num_dof)
     free_dofs = np.setdiff1d(all_dofs, prescribed_dofs)
 
@@ -249,27 +232,27 @@ def sys_solve(K, F, prescribed_dofs, prescribed_vals):
         for elem_id, (blk_i, loc_i) in block_elem_map.items():
             block = blocks[blk_i]
             nodes = block["connect"][loc_i]
-            xe = coords[nodes].flatten()
+            xe = coords[nodes]
             props = block["element"]
             material = materials[block["material"]]
             eft = np.array([n * dof_per_node for n in nodes], dtype=int)
             ue = u[eft]
 
-            qe = elem_int_force(props, material, xe, ue)
-            qe = np.asarray(qe).reshape(-1)
-            R[eft] += qe
             ke = elem_stiff(material, xe, props, ue)
-            Kt[np.ix_(eft, eft)] += np.asarray(ke)
+            Kt[np.ix_(eft, eft)] += np.asarray(ke, dtype=float)
+
+            q_int = np.asarray(ke @ ue, dtype=float).reshape(-1)
+            R[eft] += q_int
 
         Fext = np.zeros(num_dof, dtype=float)
 
         for bc in bcs:
             if "node" in bc and "nodes" not in bc:
                 bc["nodes"] = [bc["node"]]
-    
+
             if "dof" in bc and "local_dof" not in bc:
                 bc["local_dof"] = bc["dof"]
-            
+
             if bc["type"] == NEUMANN:
                 for n in bc["nodes"]:
                     I = global_dof(n, bc["local_dof"], dof_per_node)
@@ -283,11 +266,12 @@ def sys_solve(K, F, prescribed_dofs, prescribed_vals):
                 props = block["element"]
                 nodes = block["connect"][loc_idx]
 
-                xe = coords[nodes].flatten()
+                xe = coords[nodes]
                 qext = elem_ext_force(props, material, xe, dload, g=9.81)
                 eft = np.array([n * dof_per_node for n in nodes], dtype=int)
-                qext = np.asarray
-                Fext[eft] += qext
+                qvec = np.array([qext, qext], dtype=float)
+                Fext[eft] += qvec
+
         R -= Fext
 
         R_reduced = R[free_dofs]
@@ -304,12 +288,22 @@ def sys_solve(K, F, prescribed_dofs, prescribed_vals):
                 "stiff": Kt,
                 "force": Fext,
             }
-        
+
         du_f = np.linalg.solve(Kt_ff, -R_reduced)
         u[free_dofs] += du_f
-
         u[prescribed_dofs] = prescribed_vals
-    
+
+        R_post = (Kt @ u) - Fext
+        if np.linalg.norm(R_post[free_dofs]) < tol:
+            return {
+                "dofs": u,
+                "u": u,
+                "num_iter": iter,
+                "converged": True,
+                "stiff": Kt,
+                "force": Fext,
+            }
+
     return {
         "dofs": u,
         "u": u,
