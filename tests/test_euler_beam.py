@@ -1,11 +1,7 @@
 import numpy as np
-import pytest
-
-# Skip the module if the Euler-Bernoulli beam implementation is not yet available.
-first = pytest.importorskip("wundy.first")
+import wundy
 
 
-@pytest.mark.xfail(reason="wundy.first.elem_stiff pending Euler-Bernoulli beam support")
 def test_euler_beam_elem_stiff():
     """The 2D Euler-Bernoulli beam element stiffness should match the closed form."""
 
@@ -17,7 +13,7 @@ def test_euler_beam_elem_stiff():
     material = {"type": "ELASTIC", "parameters": {"E": E}}
     props = {"properties": {"inertia": I, "area": 1.0}}
 
-    ke = first.elem_stiff(material, xe, props, n_gauss=2)
+    ke = wundy.first.elem_stiff(material, xe, props, n_gauss=2)
 
     factor = E * I / L**3
     expected = factor * np.array(
@@ -30,7 +26,7 @@ def test_euler_beam_elem_stiff():
     )
 
     assert np.allclose(ke, expected)
-@pytest.mark.xfail(reason="wundy.first.elem_stiff pending Euler-Bernoulli beam support")
+
 def test_cantileveer_tip_deflection():
     """A single beam element cantilever should reproduce the classical tip deflection."""
 
@@ -43,7 +39,7 @@ def test_cantileveer_tip_deflection():
     material = {"type": "ELASTIC", "parameters": {"E": E}}
     props = {"properties": {"inertia": I, "area": 1.0}}
 
-    ke = first.elem_stiff(material, xe, props, n_gauss=2)
+    ke = wundy.first.elem_stiff(material, xe, props, n_gauss=2)
 
     # Fixed degrees of freedom at node 1: transverse displacement and rotation.
     free_dof = slice(2, 4)
