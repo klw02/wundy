@@ -37,59 +37,86 @@ def gauss_points_weights(n_gauss: int = 2):
         raise ValueError(f"Unsupported number of Gauss points: {n_gauss}")
     return pts, wts
 
-def elem_stiff(material: dict[str, Any], 
-               xe: NDArray[np.float64], 
-               props: dict[str, Any],
-               ue: NDArray[np.float64],
-               n_gauss: int = 2) -> NDArray[np.float64]:
-    """ Compute the 1D element stiffness matrix for a T1D1 bar element
-     Parameters
+def elem_stiff(
+    material: dict[str, Any],
+    xe: NDArray[np.float64],
+    props: dict[str, Any],
+    ue: NDArray[np.float64] | None = None,
+    n_gauss: int = 2,
+) -> NDArray[np.float64]:
+    """Compute the element stiffness matrix for a 1D bar or Euler-Bernoulli beam.
+
+    Parameters
     ------------------
     material: dict
-        material data, must contain 'type' and 'parameters' including 'E'
+        Material data, must contain 'type' and 'parameters' including 'E'.
     xe: (2,1) ndarray
-        element nodal coordinates [[x1], [x2]]
+        Element nodal coordinates ``[[x1], [x2]]``.
     props: dict
-        element property dictionary containing 'properties' -> {'area': A}
+        Element property dictionary containing ``'properties'``.  For bars this
+        must include ``'area'``; for Euler-Bernoulli beams it must include
+        ``'inertia'`` (and may also include ``'area'``).
+    ue: (2,) or (4,) ndarray, optional
+        Element nodal displacement vector.  Not used for linear materials but
+        kept for signature compatibility.
     n_gauss: int, optional
-        number of gauss integration points (default 2, support up to 3)
-    
-     Returns
+        Number of Gauss integration points for bars (default 2).
+
+    Returns
     ---------
-    ke: (2,2) ndarray
-        element stiffness matrix
-    
-     Notes
+    ke: ndarray
+        Element stiffness matrix.  Shape is ``(2, 2)`` for bars and ``(4, 4)``
+        for Euler-Bernoulli beams.
+
+    Notes
     -------
-    - Currently support linear elastic materials, support for neohookean material types planned"""
+    - Linear elastic bar and Euler-Bernoulli beam formulations are supported.
+    - Support for Neo-Hookean materials is retained for bar elements.
+    """
 
     mat_type = material["type"]
     params = material["parameters"]
-    A = props["properties"]["area"]
-    x1, x2 = xe[0,0], xe[1,0]
+    properties = props.get("properties", {})
+
+    x1, x2 = xe[0, 0], xe[1, 0]
     L = x2 - x1
     if np.isclose(L, 0.0):
         raise ValueError("Zero Length Element Detected")
 
+    # Euler-Bernoulli beam bending stiffness (2 DOF per node: w, theta).
+    if "inertia" in properties:
+        E = params["E"]
+        I = properties["inertia"]
+        factor = E * I / (L**3)
+        return factor * np.array(
+            [
+                [12.0, 6.0 * L, -12.0, 6.0 * L],
+                [6.0 * L, 4.0 * L**2, -6.0 * L, 2.0 * L**2],
+                [-12.0, -6.0 * L, 12.0, -6.0 * L],
+                [6.0 * L, 2.0 * L**2, -6.0 * L, 4.0 * L**2],
+            ]
+        )
+
+    # Default to axial bar formulation (1 DOF per node).
+    A = properties["area"]
+
     dN_dksi = np.array([[-0.5, 0.5]])
     pts, wts = gauss_points_weights(n_gauss)
-    ke = np.zeros((2,2))
+    ke = np.zeros((2, 2))
 
     for ksi, w in zip(pts, wts):
         dx_dksi = np.dot(dN_dksi, xe)
-        dksi_dx = 1/dx_dksi.item()
+        dksi_dx = 1 / dx_dksi.item()
         dN_dx = dN_dksi * dksi_dx
         B = dN_dx
         J = dx_dksi
-        
+
         if mat_type == "ELASTIC":
             E = params["E"]
             ke += B.T @ B * A * E * J * w
-            print(ke)
-        
+
         elif mat_type == "NEOHOOK":
             E_lin = params.get("E", params["mu"])
-
             ke += (B.T @ B) * A * E_lin * J * w
 
         else:
