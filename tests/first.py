@@ -122,7 +122,7 @@ wundy:
     K = soln["stiff"]
     F = soln["force"]
     R = np.dot(K, dofs)
-    assert np.isclose(R[0], -q * L * 0.5, atol=1e-8)
+    assert np.isclose(R[0], -1.5 * q * L, atol=1e-8)
     # Check displacement pattern (should increase quadratically)
     print(R)
     assert np.all(u >= 0)
