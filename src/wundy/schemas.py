@@ -196,7 +196,7 @@ dload_schema = Schema(
                 And(list, list_of_int),  # list of elements
             ),
             "type": And(str, valid_dload_type, Use(normalize_case)),
-            "value": Use(float),
+            "value": Or(Use(float), And(str)),
             "direction": And(
                 list,
                 list_of_numeric,
@@ -204,6 +204,7 @@ dload_schema = Schema(
                 Use(lambda sequence: [float(x) for x in sequence]),
             ),
             Optional("name"): And(str, Use(normalize_case)),
+            Optional("n_gauss", default=None): Or(int, None),
         },
     )
 )

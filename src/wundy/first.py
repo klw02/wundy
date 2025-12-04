@@ -37,6 +37,69 @@ def gauss_points_weights(n_gauss: int = 2):
         raise ValueError(f"Unsupported number of Gauss points: {n_gauss}")
     return pts, wts
 
+
+def beam_shape_functions(r: NDArray[np.float64], length: float) -> NDArray[np.float64]:
+    """Cubic Hermite shape functions for Euler-Bernoulli beam elements."""
+
+    n1 = 0.25 * (1.0 - r) ** 2 * (2.0 + r)
+    n2 = 0.125 * length * (1.0 - r) ** 2 * (1.0 + r)
+    n3 = 0.25 * (1.0 + r) ** 2 * (2.0 - r)
+    n4 = 0.125 * length * (1.0 + r) ** 2 * (r - 1.0)
+    return np.vstack([n1, n2, n3, n4])
+
+
+def make_load_function(value: Any):
+    """Return a callable ``q(x)`` for a distributed load definition."""
+
+    if callable(value):
+        return value
+
+    if isinstance(value, (int, float)):
+        return lambda x, v=float(value): np.asarray(x, dtype=float) * 0 + v
+
+    if isinstance(value, (list, tuple)) and all(isinstance(v, (int, float)) for v in value):
+        coeffs = np.array(value, dtype=float)
+
+        def _poly(x):
+            powers = np.array([x**i for i in range(len(coeffs))])
+            return np.tensordot(coeffs, powers, axes=1)
+
+        return _poly
+
+    if isinstance(value, str):
+        expr = value
+
+        def _expr(x):
+            return eval(expr, {"__builtins__": {}}, {"x": x, "np": np})
+
+        return _expr
+
+    raise TypeError(f"Unsupported distributed load value {value!r}")
+
+
+def element_dof_indices(nodes: NDArray[np.int64], dof_per_node: int) -> NDArray[np.int64]:
+    indices = []
+    for n in nodes:
+        start = n * dof_per_node
+        indices.extend(range(start, start + dof_per_node))
+    return np.array(indices, dtype=int)
+
+
+def resolve_dof_per_node(blocks: list[dict[str, Any]]) -> int:
+    dof_options = set()
+    for block in blocks:
+        elem_type = block["element"].get("type")
+        properties = block["element"].get("properties", {})
+        if elem_type:
+            elem_type = elem_type.upper()
+        if elem_type == "EULER" or "inertia" in properties:
+            dof_options.add(2)
+        else:
+            dof_options.add(1)
+    if len(dof_options) != 1:
+        raise ValueError("Mixed element types with different DOFs per node are not supported")
+    return dof_options.pop()
+
 def elem_stiff(
     material: dict[str, Any],
     xe: NDArray[np.float64],
@@ -172,48 +235,49 @@ def elem_int_force(props: dict[str, Any],
     
     return N
  
-def elem_ext_force(props: dict[str, Any], 
-                   material: dict[str, Any],
-                   xe: NDArray[np.float64],
-                   dload: list[dict],
-                   g: float = 9.81) -> NDArray[np.float64]:
-    """Compute the external force for a 1D bar element
-     Parameters
-    ------------
-    props: dict
-        element properties dictionary containing 'properties': {'area': A}
-    material: dict
-        material dictionary containing 'parameters' including density 'rho'
-    dload: dict
-        distributed load description containg 'value' (q)
-    xe: (2,1) ndarray
-        element nodal coordinates [[x1, x2]]
-    g: float, optional
-        gravitational acceleration (default 9.81)
-    
-     Returns
-    ---------
-    q_ext: (2, ) ndarray
-        external equivalent nodal forces from q and graviational body forces
-    
-     Notes
-    -------
-    - Assumes constant distributed load 'q'
-    - body force is assumed to be gravitational"""
+def elem_ext_force(
+    props: dict[str, Any],
+    material: dict[str, Any],
+    xe: NDArray[np.float64],
+    dload: dict,
+    g: float = 9.81,
+    n_gauss: int | None = None,
+) -> NDArray[np.float64]:
+    """Compute equivalent nodal forces for bar and Euler-Bernoulli beam elements."""
 
-    A = props["properties"]["area"]
-    q = float(dload["value"])
-    rho = float(material.get("density", 0.0))
+    q = make_load_function(dload["value"])
+    direction = float(dload["direction"][0]) if "direction" in dload else 1.0
 
     if dload["type"] not in ("BX", "GRAV"):
         raise ValueError(f"Unsupported distributed load type: {dload['type']}")
 
-    x1, x2 = xe[:,0]
-    L = x2 - x1
+    properties = props.get("properties", {})
+    elem_type = props.get("type", "").upper()
+    x1, x2 = xe[:, 0]
+    length = x2 - x1
 
-    q_ext = q * (L / 6)
+    if length <= 0:
+        raise ValueError("Element length must be positive")
 
-    return q_ext
+    if elem_type == "EULER" or "inertia" in properties:
+        pts, wts = gauss_points_weights(n_gauss or dload.get("n_gauss", 3) or 3)
+        f_ext = np.zeros(4)
+        for r, w in zip(pts, wts):
+            x = 0.5 * ((1.0 - r) * x1 + (1.0 + r) * x2)
+            n = beam_shape_functions(np.array([r]), length).flatten()
+            f_ext += n * direction * q(x) * (length / 2.0) * w
+        return f_ext
+
+    # Default to axial bar formulation.
+    pts, wts = gauss_points_weights(n_gauss or dload.get("n_gauss", 2) or 2)
+    f_ext = np.zeros(2)
+    for r, w in zip(pts, wts):
+        n1 = 0.5 * (1.0 - r)
+        n2 = 0.5 * (1.0 + r)
+        x = 0.5 * ((1.0 - r) * x1 + (1.0 + r) * x2)
+        f_ext[0] += n1 * direction * q(x) * (length / 2.0) * w
+        f_ext[1] += n2 * direction * q(x) * (length / 2.0) * w
+    return f_ext
 
 def newton_solve(
         coords: NDArray[np.float64],
@@ -227,7 +291,7 @@ def newton_solve(
 ):
     """Iteratively solve for displacements using a Newton–Raphson procedure."""
 
-    dof_per_node = 1
+    dof_per_node = resolve_dof_per_node(blocks)
     num_node = coords.shape[0]
     num_dof = num_node * dof_per_node
 
@@ -262,7 +326,7 @@ def newton_solve(
             xe = coords[nodes]
             props = block["element"]
             material = materials[block["material"]]
-            eft = np.array([n * dof_per_node for n in nodes], dtype=int)
+            eft = element_dof_indices(nodes, dof_per_node)
             ue = u[eft]
 
             ke = elem_stiff(material, xe, props, ue)
@@ -295,8 +359,8 @@ def newton_solve(
 
                 xe = coords[nodes]
                 qext = elem_ext_force(props, material, xe, dload, g=9.81)
-                eft = np.array([n * dof_per_node for n in nodes], dtype=int)
-                qvec = np.array([qext, qext], dtype=float)
+                eft = element_dof_indices(nodes, dof_per_node)
+                qvec = np.asarray(qext, dtype=float).reshape(-1)
                 Fext[eft] += qvec
 
         R -= Fext
@@ -339,6 +403,90 @@ def newton_solve(
         "stiff": Kt,
         "force": Fext,
         "converged": False,
+    }
+
+
+def manufactured_solution_beam(
+    length: float,
+    n_elem: int,
+    q_expr: str,
+    w_exact,
+    theta_exact,
+    material: dict[str, Any],
+    element_props: dict[str, Any],
+    n_gauss: int = 3,
+):
+    """Solve a beam with an analytic load/solution pair and report MMS errors."""
+
+    nodes = np.linspace(0.0, length, n_elem + 1)
+    coords = nodes.reshape(-1, 1)
+
+    block = {
+        "name": "MMS-BEAM",
+        "material": "MAT",
+        "element": {"type": "EULER", "properties": element_props.get("properties", element_props)},
+        "connect": np.array([[i, i + 1] for i in range(n_elem)], dtype=int),
+        "elem_map": {i: i for i in range(n_elem)},
+    }
+
+    materials = {"MAT": material}
+    bcs = [
+        {"nodes": [0], "local_dof": 0, "type": DIRICHLET, "value": float(w_exact(0.0))},
+        {"nodes": [0], "local_dof": 1, "type": DIRICHLET, "value": float(theta_exact(0.0))},
+        {
+            "nodes": [n_elem],
+            "local_dof": 0,
+            "type": DIRICHLET,
+            "value": float(w_exact(length)),
+        },
+        {
+            "nodes": [n_elem],
+            "local_dof": 1,
+            "type": DIRICHLET,
+            "value": float(theta_exact(length)),
+        },
+    ]
+
+    dload = [
+        {
+            "name": "MMS-LOAD",
+            "elements": list(range(n_elem)),
+            "type": "BX",
+            "value": q_expr,
+            "direction": [1.0],
+            "n_gauss": n_gauss,
+        }
+    ]
+
+    block_elem_map = {i: (0, i) for i in range(n_elem)}
+
+    soln = newton_solve(
+        coords=coords,
+        blocks=[block],
+        bcs=bcs,
+        dloads=dload,
+        materials=materials,
+        block_elem_map=block_elem_map,
+    )
+
+    u = soln["u"]
+    displacements = u[0::2]
+    rotations = u[1::2]
+
+    w_ref = w_exact(nodes)
+    theta_ref = theta_exact(nodes)
+
+    return {
+        "solution": soln,
+        "nodes": nodes,
+        "displacements": displacements,
+        "rotations": rotations,
+        "exact_displacements": w_ref,
+        "exact_rotations": theta_ref,
+        "errors": {
+            "w_max": float(np.max(np.abs(displacements - w_ref))),
+            "theta_max": float(np.max(np.abs(rotations - theta_ref))),
+        },
     }
 
 def first_fe_code(
